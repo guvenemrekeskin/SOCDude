@@ -18,7 +18,7 @@ Wazuh alert (level >= threshold)
 wazuh-integratord --> integrations/custom-socdude (this script)
         |
         v
-   Ollama (llama3.1, local) --> short Turkish SOC summary
+   Ollama (llama3.1, local) 
         |
         v
    Telegram Bot API --> your chat
@@ -46,7 +46,7 @@ wazuh-integratord --> integrations/custom-socdude (this script)
 ## Installation
 
 ```bash
-git clone https://github.com/<your-username>/SOCDude.git
+git clone 
 cd SOCDude
 sudo bash install.sh
 ```
@@ -64,16 +64,6 @@ The installer is idempotent — safe to re-run. It will:
    first)
 7. Restart `wazuh-manager` and send a test Telegram message to confirm
    everything is wired up correctly
-
-### Why `custom-socdude` and not `socdude`?
-
-`wazuh-integratord` only accepts a fixed list of built-in integration names
-(slack, pagerduty, virustotal, shuffle, ...). A custom script has to be
-named with a `custom-` prefix or Wazuh silently rejects it with
-`Invalid integration: 'socdude'. Not currently supported.` — the script
-never even gets called. This tripped us up during development, so it's
-baked into the installer now; don't rename the script or the
-`<name>` tag back to a bare `socdude`.
 
 ## Configuration
 
@@ -112,16 +102,3 @@ Every run is tagged `[custom-socdude]`.
   and generate a new one.
 - `config.json` is installed with `640` permissions so only root and the
   Wazuh service group can read it.
-
-## Known limitations / roadmap
-
-- LLM inference latency depends entirely on host CPU/RAM — on modest VMs a
-  single analysis can take 1-2 minutes.
-- No MITRE ATT&CK mapping yet.
-- No persistent alert history / dashboard yet (SQLite-backed history is
-  planned).
-- Single Telegram chat only; no multi-channel or severity-based routing yet.
-
-## License
-
-MIT — see [LICENSE](LICENSE).
