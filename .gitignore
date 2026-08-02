@@ -1,0 +1,19 @@
+# Secrets / local config - never commit these
+config.json
+*.env
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor / OS cruft
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs (if any test logs end up in the repo dir)
+*.log

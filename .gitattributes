@@ -1,0 +1,10 @@
+# Force LF line endings for scripts, regardless of the OS/Git config
+# that clones or checks out this repo. Without this, Windows' Git
+# autocrlf can silently convert install.sh's line endings to CRLF,
+# which breaks it on Linux with an error like:
+#   /bin/bash^M: bad interpreter: No such file or directory
+*.sh text eol=lf
+*.py text eol=lf
+
+# Everything else: let Git decide (default behavior)
+* text=auto
