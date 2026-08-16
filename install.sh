@@ -1,21 +1,30 @@
 #!/bin/bash
 #
 # SOCDude Installer
+#
 # Installs/configures: Python deps, Ollama + llama3.1, the socdude
-# integration script, its config file, and the Wazuh ossec.conf hook.
-# Safe to re-run: every step checks current state first and skips
-# work that's already done, unless you explicitly ask to reconfigure.
+# Python package (to /opt/socdude), the Wazuh launcher script, its
+# config file, and the Wazuh ossec.conf hook.
+#
+# Safe to re-run: every step checks current state first and skips work
+# that's already done, unless you explicitly ask to reconfigure.
 
-set -uo pipefail  # no -e: we handle failures explicitly per step so
-                   # one bad check doesn't kill the whole script
+set -uo pipefail   # no -e: failures are handled explicitly per step so
+                    # one bad check doesn't kill the whole install
 
 # ---------- Paths ----------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SRC_SCRIPT="$SCRIPT_DIR/socdude.py"
+PKG_SRC_DIR="$SCRIPT_DIR/socdude"
+LAUNCHER_SRC="$SCRIPT_DIR/custom-socdude"
+
+INSTALL_DIR="/opt/socdude"
+PKG_DEST_DIR="$INSTALL_DIR/socdude"
+
 WAZUH_INT_DIR="/var/ossec/integrations"
-DEST_SCRIPT="$WAZUH_INT_DIR/custom-socdude"
+LAUNCHER_DEST="$WAZUH_INT_DIR/custom-socdude"
 INTEGRATION_NAME="custom-socdude"
 OSSEC_CONF="/var/ossec/etc/ossec.conf"
+
 CONFIG_DIR="/etc/socdude"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 
@@ -25,25 +34,12 @@ ok()   { echo -e "${GREEN}[OK]${NC} $1"; }
 warn() { echo -e "${YELLOW}[!]${NC} $1"; }
 err()  { echo -e "${RED}[-]${NC} $1"; }
 step() { echo -e "\n${YELLOW}==>${NC} $1"; }
+fail_exit() { err "$1"; err "Installation aborted."; exit 1; }
 
-fail_exit() {
-    err "$1"
-    err "Installation aborted."
-    exit 1
-}
-
-# Detect the group Wazuh's own processes run as. Newer Wazuh versions
-# use the 'wazuh' user/group; older ones used 'ossec'. We need this to
-# set correct file permissions so wazuh-integratord (running as this
-# user) can actually read the script and config file.
 detect_wazuh_group() {
-    if getent group wazuh >/dev/null 2>&1; then
-        echo "wazuh"
-    elif getent group ossec >/dev/null 2>&1; then
-        echo "ossec"
-    else
-        echo "root"  # fallback, will warn later
-    fi
+    if getent group wazuh >/dev/null 2>&1; then echo "wazuh";
+    elif getent group ossec >/dev/null 2>&1; then echo "ossec";
+    else echo "root"; fi
 }
 
 # ---------- 0. Root check ----------
@@ -52,20 +48,46 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo "=================================================="
-echo "          SOCDude Installer                       "
+echo "  SOCDude Installer  "
 echo "=================================================="
 
-# ---------- 0b. Sanity: source script present ----------
-if [ ! -f "$SRC_SCRIPT" ]; then
-    fail_exit "socdude.py not found next to install.sh (expected at $SRC_SCRIPT)."
+if [ ! -d "$PKG_SRC_DIR" ] || [ ! -f "$LAUNCHER_SRC" ]; then
+    fail_exit "socdude/ package or custom-socdude launcher not found next to install.sh."
 fi
 
-# ---------- 1. Python3 + pip ----------
+# ---------- 1. SIEM platform selection ----------
+# Only Wazuh is implemented today. This still asks up front so the
+# config schema and the rest of the flow are already future-proofed
+# for Splunk/QRadar - selecting them just tells you they're not ready.
+step "SIEM platform"
+SIEM_PLATFORM="wazuh"
+if [ -f "$CONFIG_FILE" ] && grep -q '"siem_platform"' "$CONFIG_FILE" 2>/dev/null; then
+    SIEM_PLATFORM=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('siem_platform','wazuh'))" 2>/dev/null || echo "wazuh")
+    ok "Using previously configured SIEM platform: $SIEM_PLATFORM"
+else
+    echo "Which SIEM product are you using?"
+    echo "  1) Wazuh   (supported)"
+    echo "  2) Splunk  (planned - not implemented yet)"
+    echo "  3) QRadar  (planned - not implemented yet)"
+    read -p "Choice [1]: " SIEM_CHOICE
+    case "${SIEM_CHOICE:-1}" in
+        2) SIEM_PLATFORM="splunk" ;;
+        3) SIEM_PLATFORM="qradar" ;;
+        *) SIEM_PLATFORM="wazuh" ;;
+    esac
+fi
+
+if [ "$SIEM_PLATFORM" != "wazuh" ]; then
+    warn "$SIEM_PLATFORM support isn't implemented yet - see socdude/siem.py for the planned adapter shape."
+    warn "Continuing the install with siem_platform=$SIEM_PLATFORM saved in config.json, but Wazuh"
+    warn "integration steps below will be skipped. Re-run and choose Wazuh to actually get alerts flowing."
+fi
+
+# ---------- 2. Python3 + pip ----------
 step "Checking Python3"
 if ! command -v python3 >/dev/null 2>&1; then
     warn "Python3 not found. Installing..."
-    apt-get update -qq && apt-get install -y python3 python3-pip \
-        || fail_exit "Failed to install Python3."
+    apt-get update -qq && apt-get install -y python3 python3-pip || fail_exit "Failed to install Python3."
     ok "Python3 installed."
 else
     ok "Python3 already installed ($(python3 --version 2>&1))."
@@ -81,9 +103,6 @@ if python3 -c "import requests" >/dev/null 2>&1; then
     ok "'requests' already installed."
 else
     warn "'requests' not found. Installing..."
-    # --break-system-packages needed on newer Debian/Ubuntu (PEP 668);
-    # harmless flag on older systems that don't require it... but to be
-    # safe we try without it first, then with it.
     if pip3 install --quiet requests 2>/dev/null; then
         ok "'requests' installed."
     elif pip3 install --quiet --break-system-packages requests 2>/dev/null; then
@@ -93,7 +112,7 @@ else
     fi
 fi
 
-# ---------- 2. Ollama ----------
+# ---------- 3. Ollama ----------
 step "Checking Ollama"
 if ! command -v ollama >/dev/null 2>&1; then
     warn "Ollama not found. Installing..."
@@ -107,8 +126,7 @@ step "Ensuring Ollama service is running"
 if systemctl is-active --quiet ollama 2>/dev/null; then
     ok "Ollama service already running."
 else
-    systemctl enable --now ollama >/dev/null 2>&1 \
-        || warn "Could not manage ollama via systemctl (may be running another way)."
+    systemctl enable --now ollama >/dev/null 2>&1 || warn "Could not manage ollama via systemctl (may be running another way)."
     sleep 2
     systemctl is-active --quiet ollama 2>/dev/null && ok "Ollama service started." \
         || warn "Ollama service status unknown; continuing anyway."
@@ -123,29 +141,38 @@ else
     ok "Llama 3.1 model pulled."
 fi
 
-# ---------- 3. Wazuh presence check ----------
-step "Checking Wazuh installation"
-if [ ! -d "$WAZUH_INT_DIR" ]; then
-    fail_exit "Wazuh integrations directory not found at $WAZUH_INT_DIR. Is Wazuh manager installed?"
-fi
-if [ ! -f "$OSSEC_CONF" ]; then
-    fail_exit "ossec.conf not found at $OSSEC_CONF."
-fi
-ok "Wazuh manager detected."
+# ---------- 4. Deploy the socdude Python package ----------
+step "Installing socdude package to $PKG_DEST_DIR"
+mkdir -p "$INSTALL_DIR" || fail_exit "Could not create $INSTALL_DIR."
+rm -rf "$PKG_DEST_DIR"
+cp -r "$PKG_SRC_DIR" "$PKG_DEST_DIR" || fail_exit "Failed to copy the socdude package."
+chmod -R a+rX "$INSTALL_DIR"
+ok "Package deployed to $PKG_DEST_DIR."
 
-WAZUH_GROUP="$(detect_wazuh_group)"
-if [ "$WAZUH_GROUP" = "root" ]; then
-    warn "Could not find 'wazuh' or 'ossec' group; falling back to root ownership."
-else
-    ok "Wazuh runs under the '$WAZUH_GROUP' group. Files will be owned by root:$WAZUH_GROUP."
+WAZUH_GROUP="root"
+if [ "$SIEM_PLATFORM" = "wazuh" ]; then
+    step "Checking Wazuh installation"
+    if [ ! -d "$WAZUH_INT_DIR" ]; then
+        fail_exit "Wazuh integrations directory not found at $WAZUH_INT_DIR. Is Wazuh manager installed?"
+    fi
+    if [ ! -f "$OSSEC_CONF" ]; then
+        fail_exit "ossec.conf not found at $OSSEC_CONF."
+    fi
+    ok "Wazuh manager detected."
+    WAZUH_GROUP="$(detect_wazuh_group)"
+    if [ "$WAZUH_GROUP" = "root" ]; then
+        warn "Could not find 'wazuh' or 'ossec' group; falling back to root ownership."
+    else
+        ok "Wazuh runs under the '$WAZUH_GROUP' group. Files will be owned by root:$WAZUH_GROUP."
+    fi
 fi
 
-# ---------- 4. Telegram credentials / config file ----------
-step "Configuring Telegram credentials"
+# ---------- 5. Telegram credentials + config file ----------
+step "Configuring SOCDude"
 NEED_CREDS=1
 if [ -f "$CONFIG_FILE" ]; then
     ok "Existing config found at $CONFIG_FILE."
-    read -p "    Reconfigure Telegram token / chat ID? [y/N]: " RECONF
+    read -p "  Reconfigure Telegram token / chat ID / threat-intel API keys? [y/N]: " RECONF
     if [[ ! "$RECONF" =~ ^[Yy]$ ]]; then
         NEED_CREDS=0
     fi
@@ -154,80 +181,98 @@ fi
 if [ "$NEED_CREDS" -eq 1 ]; then
     read -p "Enter your Telegram Bot Token: " TELEGRAM_TOKEN
     read -p "Enter your Telegram Chat ID: " CHAT_ID
-
     if [ -z "$TELEGRAM_TOKEN" ] || [ -z "$CHAT_ID" ]; then
         fail_exit "Token and Chat ID cannot be empty."
     fi
 
+    echo ""
+    echo "Optional threat-intel API keys (press Enter to skip any of these -"
+    echo "that provider is simply skipped at analysis time, nothing breaks):"
+    read -p "  VirusTotal API key []: " VT_KEY
+    read -p "  AbuseIPDB API key []: " ABUSEIPDB_KEY
+    read -p "  GreyNoise API key []: " GREYNOISE_KEY
+    read -p "  Shodan API key []: " SHODAN_KEY
+    read -p "  AlienVault OTX API key []: " OTX_KEY
+
     mkdir -p "$CONFIG_DIR"
 
-    # Preserve existing tunables if a config already exists; otherwise
-    # start from sensible defaults (kept in sync with socdude.py DEFAULTS).
-    if [ -f "$CONFIG_FILE" ]; then
-        python3 - "$CONFIG_FILE" "$TELEGRAM_TOKEN" "$CHAT_ID" <<'PYEOF'
-import json, sys
-path, token, chat_id = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(path) as f:
-    cfg = json.load(f)
+    python3 - "$CONFIG_FILE" "$TELEGRAM_TOKEN" "$CHAT_ID" "$SIEM_PLATFORM" \
+        "$VT_KEY" "$ABUSEIPDB_KEY" "$GREYNOISE_KEY" "$SHODAN_KEY" "$OTX_KEY" <<'PYEOF'
+import json, sys, os
+
+(path, token, chat_id, siem_platform,
+ vt_key, abuseipdb_key, greynoise_key, shodan_key, otx_key) = sys.argv[1:10]
+
+cfg = {}
+if os.path.exists(path):
+    try:
+        with open(path) as f:
+            cfg = json.load(f)
+    except Exception:
+        cfg = {}
+
 cfg["telegram_token"] = token
 cfg["chat_id"] = chat_id
+cfg["siem_platform"] = siem_platform
+cfg["virustotal_api_key"] = vt_key
+cfg["abuseipdb_api_key"] = abuseipdb_key
+cfg["greynoise_api_key"] = greynoise_key
+cfg["shodan_api_key"] = shodan_key
+cfg["otx_api_key"] = otx_key
+
+# Sensible defaults for anything not already present (kept in sync with
+# socdude/config.py DEFAULTS - these are just the ones worth seeding
+# explicitly into the on-disk file for visibility/editability).
+cfg.setdefault("ollama_url", "http://localhost:11434/api/generate")
+cfg.setdefault("ollama_model", "llama3.1")
+cfg.setdefault("min_level", 12)
+cfg.setdefault("cooldown_seconds", 300)
+cfg.setdefault("global_rate_limit_seconds", 5)
+cfg.setdefault("global_rate_limit_max_burst", 5)
+cfg.setdefault("correlation_window_seconds", 1800)
+cfg.setdefault("correlation_max_events", 15)
+cfg.setdefault("enrichment_enabled", True)
+cfg.setdefault("enrichment_max_iocs_per_type", 5)
+cfg.setdefault("state_db_path", "/var/ossec/logs/socdude_state.db")
+
 with open(path, "w") as f:
     json.dump(cfg, f, indent=2)
 PYEOF
-    else
-        cat > "$CONFIG_FILE" <<EOF
-{
-  "telegram_token": "$TELEGRAM_TOKEN",
-  "chat_id": "$CHAT_ID",
-  "ollama_url": "http://localhost:11434/api/generate",
-  "ollama_model": "llama3.1",
-  "min_level": 12,
-  "cooldown_seconds": 300,
-  "global_rate_limit_seconds": 5,
-  "global_rate_limit_max_burst": 5,
-  "http_timeout_seconds": 10,
-  "ollama_timeout_seconds": 150,
-  "ollama_num_predict": 180,
-  "max_retries": 2,
-  "retry_backoff_seconds": 2
-}
-EOF
-    fi
 
     chmod 640 "$CONFIG_FILE"
     chown "root:$WAZUH_GROUP" "$CONFIG_FILE" 2>/dev/null || warn "Could not set group ownership on config."
     ok "Config written to $CONFIG_FILE (mode 640, root:$WAZUH_GROUP)."
 else
-    ok "Keeping existing Telegram credentials."
+    ok "Keeping existing configuration."
     chmod 640 "$CONFIG_FILE" 2>/dev/null
     chown "root:$WAZUH_GROUP" "$CONFIG_FILE" 2>/dev/null || warn "Could not set group ownership on config."
 fi
 
-# ---------- 5. Install the integration script ----------
-step "Installing socdude integration script"
-cp "$SRC_SCRIPT" "$DEST_SCRIPT" || fail_exit "Failed to copy socdude.py."
-chmod 750 "$DEST_SCRIPT"
-chown "root:$WAZUH_GROUP" "$DEST_SCRIPT" 2>/dev/null || warn "Could not set group ownership on script."
-ok "Script installed at $DEST_SCRIPT."
+if [ "$SIEM_PLATFORM" != "wazuh" ]; then
+    echo "--------------------------------------------------"
+    ok "Config saved. Wazuh-specific steps skipped (siem_platform=$SIEM_PLATFORM)."
+    echo "--------------------------------------------------"
+    exit 0
+fi
 
-# Clean up any leftover legacy integration (old manual custom-ai-telegram
-# setup, or a script installed under the old unprefixed 'socdude' name
-# that wazuh-integratord silently rejects).
+# ---------- 6. Install the Wazuh launcher script ----------
+step "Installing Wazuh launcher script"
+cp "$LAUNCHER_SRC" "$LAUNCHER_DEST" || fail_exit "Failed to copy the launcher script."
+chmod 750 "$LAUNCHER_DEST"
+chown "root:$WAZUH_GROUP" "$LAUNCHER_DEST" 2>/dev/null || warn "Could not set group ownership on launcher."
+ok "Launcher installed at $LAUNCHER_DEST."
+
+# Clean up any leftover legacy install (pre-2.0 single-file version, or
+# a script installed under the old unprefixed 'socdude' name that
+# wazuh-integratord silently rejects).
 LEGACY_SCRIPT="$WAZUH_INT_DIR/socdude"
 if [ -f "$LEGACY_SCRIPT" ]; then
     warn "Found leftover script at $LEGACY_SCRIPT (unprefixed name, not usable by Wazuh). Removing."
     rm -f "$LEGACY_SCRIPT"
 fi
 
-# ---------- 6. Wire into ossec.conf ----------
-# IMPORTANT: wazuh-integratord only accepts a fixed list of built-in
-# integration names (slack, pagerduty, virustotal, shuffle, ...) unless
-# the name starts with "custom-". Using a bare "socdude" name makes it
-# fail with "Invalid integration: 'socdude'. Not currently supported."
-# and silently never call the script. So the <name> here MUST be
-# "custom-socdude", matching $INTEGRATION_NAME / $DEST_SCRIPT above.
+# ---------- 7. Wire into ossec.conf ----------
 step "Updating ossec.conf"
-
 if grep -q "<name>${INTEGRATION_NAME}</name>" "$OSSEC_CONF"; then
     ok "Integration block already present in ossec.conf."
 else
@@ -235,9 +280,6 @@ else
     cp "$OSSEC_CONF" "$BACKUP" || fail_exit "Failed to back up ossec.conf."
     ok "Backed up ossec.conf to $BACKUP."
 
-    # Remove any leftover block using the old unprefixed 'socdude' name
-    # (from an earlier version of this installer) so we don't end up
-    # with a dead duplicate entry.
     if grep -q "<name>socdude</name>" "$OSSEC_CONF"; then
         warn "Removing leftover unprefixed <name>socdude</name> block."
         python3 - "$OSSEC_CONF" <<'PYEOF'
@@ -245,10 +287,7 @@ import re, sys
 path = sys.argv[1]
 with open(path) as f:
     content = f.read()
-content = re.sub(
-    r'\s*<integration>\s*<name>socdude</name>.*?</integration>',
-    '', content, flags=re.DOTALL
-)
+content = re.sub(r'\s*<integration>\s*<name>socdude</name>.*?</integration>', '', content, flags=re.DOTALL)
 with open(path, 'w') as f:
     f.write(content)
 PYEOF
@@ -258,7 +297,6 @@ PYEOF
   <integration>\\n    <name>${INTEGRATION_NAME}</name>\\n    <level>12</level>\\n    <alert_format>json</alert_format>\\n  </integration>" \
         "$OSSEC_CONF" || fail_exit "Failed to edit ossec.conf. Restore from $BACKUP if needed."
 
-    # Sanity check: make sure the file is still valid XML before restarting.
     if command -v xmllint >/dev/null 2>&1; then
         if ! xmllint --noout "$OSSEC_CONF" 2>/dev/null; then
             cp "$BACKUP" "$OSSEC_CONF"
@@ -285,7 +323,7 @@ else
     warn "Failed to restart wazuh-manager via systemctl. Restart it manually."
 fi
 
-# ---------- 7. Send a test Telegram message ----------
+# ---------- 8. Send a test Telegram message ----------
 step "Sending a test message to Telegram"
 TEST_RESULT=$(python3 - "$CONFIG_FILE" <<'PYEOF'
 import json, sys
@@ -300,13 +338,10 @@ with open(path) as f:
     cfg = json.load(f)
 
 url = f"https://api.telegram.org/bot{cfg['telegram_token']}/sendMessage"
-payload = {"chat_id": cfg["chat_id"], "text": "SOCDude installed successfully. This is a test message."}
+payload = {"chat_id": cfg["chat_id"], "text": "SOCDude 2.0 installed successfully. This is a test message."}
 try:
     r = requests.post(url, json=payload, timeout=10)
-    if r.ok:
-        print("OK")
-    else:
-        print(f"FAIL: HTTP {r.status_code} - {r.text[:200]}")
+    print("OK" if r.ok else f"FAIL: HTTP {r.status_code} - {r.text[:200]}")
 except Exception as e:
     print(f"FAIL: {e}")
 PYEOF
@@ -323,8 +358,9 @@ fi
 
 echo "--------------------------------------------------"
 ok "SOCDude installation completed!"
-MIN_LEVEL_DISPLAY=$(grep -oP '"min_level":\s*\K[0-9]+' "$CONFIG_FILE" 2>/dev/null || echo 12)
+MIN_LEVEL_DISPLAY=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('min_level', 12))" 2>/dev/null || echo 12)
 echo "Alerts at level >= $MIN_LEVEL_DISPLAY will now be analyzed by AI and sent to Telegram."
-echo "Logs: tail -f /var/ossec/logs/integrations.log"
-echo "Config: $CONFIG_FILE"
+echo "Logs:    tail -f /var/ossec/logs/integrations.log"
+echo "Config:  $CONFIG_FILE"
+echo "Package: $PKG_DEST_DIR"
 echo "--------------------------------------------------"

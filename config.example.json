@@ -1,0 +1,36 @@
+{
+  "siem_platform": "wazuh",
+
+  "telegram_token": "PUT-YOUR-TELEGRAM-BOT-TOKEN-HERE",
+  "chat_id": "PUT-YOUR-TELEGRAM-CHAT-ID-HERE",
+
+  "ollama_url": "http://localhost:11434/api/generate",
+  "ollama_model": "llama3.1",
+  "ollama_timeout_seconds": 180,
+  "ollama_num_predict": 900,
+
+  "min_level": 12,
+  "cooldown_seconds": 300,
+  "global_rate_limit_seconds": 5,
+  "global_rate_limit_max_burst": 5,
+
+  "http_timeout_seconds": 10,
+  "max_retries": 2,
+  "retry_backoff_seconds": 2,
+
+  "correlation_window_seconds": 1800,
+  "correlation_max_events": 15,
+
+  "enrichment_enabled": true,
+  "enrichment_cache_ttl_seconds": 3600,
+  "enrichment_max_iocs_per_type": 5,
+  "enrichment_timeout_seconds": 8,
+
+  "virustotal_api_key": "",
+  "abuseipdb_api_key": "",
+  "greynoise_api_key": "",
+  "shodan_api_key": "",
+  "otx_api_key": "",
+
+  "state_db_path": "/var/ossec/logs/socdude_state.db"
+}

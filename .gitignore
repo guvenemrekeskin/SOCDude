@@ -1,19 +1,19 @@
-# Secrets / local config - never commit these
+# Secrets / local runtime state - never commit these
 config.json
-*.env
-.env
+/etc/socdude/
+*.db
+*.db-wal
+*.db-shm
+socdude_state.*
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
+.venv/
+venv/
+*.egg-info/
 
-# Editor / OS cruft
-.vscode/
-.idea/
-*.swp
+# OS / editor cruft
 .DS_Store
-Thumbs.db
-
-# Logs (if any test logs end up in the repo dir)
-*.log
+*.swp
