@@ -30,20 +30,6 @@ sudo bash install.sh
 - If a token or key is ever accidentally exposed, revoke and rotate it
   immediately (BotFather `/revoke` for Telegram; each provider's
   dashboard for API keys).
-- `config.json` is installed with `640` permissions - only root and
-  the Wazuh service group can read it.
-- All Telegram output is HTML-escaped before sending, and long reports
-  are split at line boundaries to stay under Telegram's message-length
-  limit rather than being truncated mid-word.
-- State (cooldown/rate-limit gating, correlation history, enrichment
-  cache) lives in a local SQLite database with WAL mode and proper
-  transactions (`BEGIN IMMEDIATE`), replacing the earlier JSON file +
-  `fcntl` lock - correct under concurrent invocations from
-  wazuh-integratord, and gives correlation/caching a real query layer
-  instead of a second ad hoc file format.
-- The LLM is explicitly instructed never to fabricate threat-intel
-  scores or MITRE technique IDs beyond what it's given - see the
-  "Design principle" above.
 
 ## Status
 
