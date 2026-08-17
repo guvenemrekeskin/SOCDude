@@ -20,6 +20,8 @@ git clone <this repo>
 cd SOCDude
 sudo bash install.sh
 
+```
+
 ## Security notes
 
 - **Never commit `/etc/socdude/config.json` or any API/bot token to
