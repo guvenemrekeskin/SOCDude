@@ -20,19 +20,23 @@ log = logging.getLogger(__name__)
 
 
 def build_prompt(alert, ioc_table: str, mitre_hints: str, enrichment_text: str,
-                  correlation_text: str) -> str:
+                  correlation_text: str, structured_fields_text: str, confidence_text: str) -> str:
     return f"""You are a senior SOC (Security Operations Center) analyst writing an
 incident note for a Tier-2 analyst who will read this in a Telegram alert.
 Write ONLY in English, regardless of the language of the raw log below.
 Be specific and technical, not generic. Do not pad with filler sentences.
 
-=== ALERT ===
+=== ALERT (Wazuh rule metadata) ===
 Rule level: {alert.level}
 Rule ID: {alert.rule_id}
 Rule description: {alert.description}
 Agent: {alert.agent_name} ({alert.agent_id})
 
-=== RAW LOG ===
+=== STRUCTURED FIELDS (Wazuh's own parsed data.* fields) ===
+{structured_fields_text}
+
+=== RAW LOG (fallback / additional context - the structured fields above
+    take precedence when both describe the same thing) ===
 {alert.full_log[:3000]}
 
 === EXTRACTED IOCs (already parsed programmatically - reference, don't re-derive) ===
@@ -48,6 +52,10 @@ Agent: {alert.agent_name} ({alert.agent_id})
 === RECENT ACTIVITY ON THIS AGENT (for correlation) ===
 {correlation_text}
 
+=== COMPUTED CONFIDENCE SCORE (calculated in code from the real signals above -
+    this is ground truth, not a suggestion) ===
+{confidence_text}
+
 Write your analysis using EXACTLY these seven section headers, in this order,
 each with 2-5 sentences (or a short bullet list where noted). Do not add
 extra sections and do not restate the raw IOC table verbatim.
@@ -57,21 +65,26 @@ What happened, in plain terms: event type, source device/hostname, user,
 application/service involved, and your own severity call
 (Info / Low / Medium / High / Critical) - which may differ from the raw
 Wazuh rule level if context (correlation, threat intel) changes your
-assessment.
+assessment. Ground this in the structured fields above wherever they
+apply, not just the raw log.
 
 2. MITRE ATT&CK / TTP ANALYSIS
 For each technique actually supported by the log evidence, give: Tactic,
 Technique ID + name, Sub-technique (if applicable), your confidence as a
 percentage, and the specific evidence in the log that supports it. Only
 cite techniques you can justify from the log or the Wazuh MITRE mapping
-above - do not pad this with speculative techniques.
+above - do not pad this with speculative techniques. If Wazuh provided no
+MITRE mapping and the raw log gives no clear technique-level evidence,
+say so explicitly instead of guessing one.
 
 3. THREAT INTELLIGENCE ASSESSMENT
 Interpret the threat intelligence data above, per IOC (reputation scores,
 ASN/geo, known-malicious indicators). If no threat intel data was
-retrieved for an IOC, say so plainly instead of guessing. Give an overall
-verdict per IOC (HIGH RISK / MEDIUM RISK / LOW RISK / UNKNOWN) based only
-on the data given.
+retrieved for an IOC (no data was returned above), say exactly that
+instead of guessing a verdict - name the IOC and state that no
+enrichment data is available for it, rather than omitting it silently.
+Give an overall verdict per IOC (HIGH RISK / MEDIUM RISK / LOW RISK /
+UNKNOWN) based only on the data given.
 
 4. CORRELATION / RELATED ACTIVITY
 Based on the recent-activity list above, state whether this alert looks
@@ -85,8 +98,10 @@ and which specific alert/log line supports each stage. If there isn't
 enough evidence for a chain, say exactly that - do not invent one.
 
 6. RISK ASSESSMENT
-One overall risk rating (LOW / MEDIUM / HIGH / CRITICAL) with 1-2 sentences
-of justification that ties together sections 1-5.
+State the computed confidence score and band EXACTLY as given above
+(e.g. "72/100 -> HIGH"), then add 1-2 sentences tying together sections
+1-5 to explain *why* that score makes sense here. Do not compute or
+state a different score of your own.
 
 7. ANALYST RECOMMENDATION
 Concrete, actionable next steps for the on-call analyst (e.g. isolate host,

@@ -1,0 +1,49 @@
+{
+  "timestamp": "2026-08-17T11:02:05.771+0000",
+  "rule": {
+    "level": 15,
+    "id": "92050",
+    "description": "Sysmon - Possible LSASS memory dump via rundll32.exe (credential access).",
+    "groups": [
+      "windows",
+      "sysmon",
+      "credential_access"
+    ],
+    "mitre": {
+      "id": [
+        "T1003.001"
+      ],
+      "tactic": [
+        "Credential Access"
+      ],
+      "technique": [
+        "OS Credential Dumping: LSASS Memory"
+      ]
+    }
+  },
+  "agent": {
+    "id": "007",
+    "name": "corp-finance-pc04",
+    "ip": "10.10.4.28"
+  },
+  "manager": {
+    "name": "wazuh-manager"
+  },
+  "id": "1755428525.331987",
+  "decoder": {
+    "name": "windows_eventchannel"
+  },
+  "data": {
+    "win": {
+      "eventdata": {
+        "image": "C:\\Windows\\System32\\rundll32.exe",
+        "commandLine": "rundll32.exe C:\\Windows\\Temp\\comsvcs.dll, MiniDump 624 C:\\Windows\\Temp\\lsass.dmp full",
+        "targetUserName": "SYSTEM",
+        "parentImage": "C:\\Windows\\System32\\cmd.exe",
+        "hashes": "MD5=44D88612FEA8A8F36DE82E1278ABB02F,SHA256=76139D73CEA4E49AC5D6E83A6013A23B19F94E79CE59B9F77CD9D9B304A010AB"
+      }
+    }
+  },
+  "location": "WinEvtLog",
+  "full_log": "Process Create: RuleName: technique_id=T1003.001,technique_name=LSASS Memory\nUtcTime: 2026-08-17 11:02:05.771\nImage: C:\\Windows\\System32\\rundll32.exe\nCommandLine: rundll32.exe C:\\Windows\\Temp\\comsvcs.dll, MiniDump 624 C:\\Windows\\Temp\\lsass.dmp full\nParentImage: C:\\Windows\\System32\\cmd.exe\nUser: NT AUTHORITY\\SYSTEM\nHashes: MD5=44D88612FEA8A8F36DE82E1278ABB02F,SHA256=76139D73CEA4E49AC5D6E83A6013A23B19F94E79CE59B9F77CD9D9B304A010AB"
+}

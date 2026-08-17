@@ -1,0 +1,31 @@
+{
+  "timestamp": "2026-08-17T15:37:48.112+0000",
+  "rule": {
+    "level": 12,
+    "id": "100201",
+    "description": "Juice Shop - SQL Injection Attack (login)",
+    "groups": ["web", "attack", "sql_injection"],
+    "mitre": {
+      "id": ["T1190"],
+      "tactic": ["Initial Access"],
+      "technique": ["Exploit Public-Facing Application"]
+    }
+  },
+  "agent": {
+    "id": "002",
+    "name": "web",
+    "ip": "10.0.2.15"
+  },
+  "manager": { "name": "wazuh-manager" },
+  "id": "1755444268.552104",
+  "decoder": { "name": "nginx-access" },
+  "data": {
+    "srcip": "10.0.2.15",
+    "dstip": "127.0.0.1",
+    "url": "/rest/user/login",
+    "protocol": "HTTP/1.1",
+    "status": "500"
+  },
+  "location": "/var/log/nginx/access.log",
+  "full_log": "10.0.2.15 - - [17/Aug/2026:15:37:48 +0000] \"POST /rest/user/login HTTP/1.1\" 500 140 \"http://localhost/\" \"Mozilla/5.0 (X11; Linux x86_64) sqlmap/1.7\" body: {\"email\":\"admin@juice-sh.op' OR 1=1 --\",\"password\":\"anything\"}"
+}

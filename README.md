@@ -7,6 +7,10 @@ analysis -> Telegram. No cloud AI API, no log data leaving your network.
 > Built and tested against a Wazuh manager monitoring a Kali + OWASP
 > Juice Shop attack lab.
 
+📄 **[Read the full write-up](WRITEUP.md)** for the design rationale and
+a walkthrough of a real alert going through the pipeline. See
+[`CHANGELOG.md`](CHANGELOG.md) for what changed between v1 and v2.
+
 ## Why this exists
 
 A raw Wazuh alert tells you a rule fired. It doesn't tell you which
@@ -39,6 +43,9 @@ wazuh-integratord --> /var/ossec/integrations/custom-socdude (launcher)
         +--> Correlation (recent alerts for the same agent, from a
         |    local SQLite event log)
         |
+        +--> Confidence scoring (0-100 score + LOW/MEDIUM/HIGH/CRITICAL/
+        |    URGENT band, computed from the signals above)
+        |
         v
    Ollama (llama3.1, local) -- interprets the above, writes a
    7-section analyst-style report in English
@@ -63,11 +70,61 @@ enforced explicitly in the prompt (see `socdude/ai_analyzer.py`).
 4. **Correlation / Related Activity** - is this isolated or part of a
    sequence on this agent?
 5. **Attack Chain** - multi-stage breakdown when the evidence supports it
-6. **Risk Assessment** - one overall rating with justification
+6. **Risk Assessment** - references the computed confidence score (see
+   below) and explains it
 7. **Analyst Recommendation** - concrete next steps
 
-The IOC table itself is rendered separately, by code, directly under
-the alert header - not by the model (see "Design principle" above).
+The IOC table and the confidence score are both rendered/computed
+separately, by code, and shown in the alert header - not written by
+the model (see "Design principle" above).
+
+### Confidence scoring
+
+Every alert gets a **0-100 confidence score** and a five-band label -
+**LOW / MEDIUM / HIGH / CRITICAL / URGENT** - computed deterministically
+in `socdude/risk_scoring.py` from four real signals:
+
+| Signal | Max points |
+|---|---|
+| Wazuh's own rule level (0-15 scale) | 35 |
+| Real threat-intel verdicts on the enriched IOCs (VirusTotal malicious count, AbuseIPDB score, GreyNoise classification, OTX pulse count) | 40 |
+| Correlated events on the same agent within the correlation window | 15 |
+| MITRE techniques Wazuh itself mapped for this rule | 10 |
+
+This score is handed to the LLM as ground truth in the prompt; the
+model's Risk Assessment section explains *why* the score makes sense,
+it does not compute its own number. Same principle as the IOC table:
+a figure that ends up in a Telegram alert should trace back to a real
+signal, not a language model's guess.
+
+### Structured fields, not just raw text
+
+Wazuh already parses many alerts into structured `data.*` fields
+(`data.srcip`, `data.url`, nested Sysmon fields like
+`data.win.eventdata.image`, etc). SOCDude extracts a curated set of
+these (see `_STRUCTURED_FIELD_KEYS` in `socdude/siem.py`) and hands
+them to the model as an explicit, labeled section *in addition to* the
+raw log - so the model has a ground-truth source IP / URL / command
+line to work from instead of having to re-parse everything from free
+text itself. The raw log is still included as a fallback for anything
+outside that curated key list.
+
+### Testing without a live Wazuh manager
+
+```bash
+cp config.example.json config.test.json
+# edit config.test.json: any placeholder telegram_token/chat_id works
+# for --dry-run; fill in real threat-intel keys to see live enrichment.
+
+python3 run_test_alert.py samples/alert_juiceshop_sqli.json \
+    --dry-run --config config.test.json
+```
+
+Four ready-made sample alerts covering different scenarios (SSH brute
+force, web SQLi, Windows credential dumping, malware + C2 callout) live
+in [`samples/`](samples/) - see [`samples/README.md`](samples/README.md)
+for details, including how to use `--persist-state` to watch the
+correlation section build up across repeated runs.
 
 ## Requirements
 
@@ -124,9 +181,12 @@ SOCDude/
     mitre.py                <- MITRE context from Wazuh's own rule metadata
     enrichment.py           <- real threat-intel API calls, parallelized + cached
     correlation.py          <- recent-activity timeline per agent
+    risk_scoring.py         <- deterministic 0-100 confidence score + band
     ai_analyzer.py           <- prompt construction + Ollama call
     notifier.py               <- Telegram formatting + delivery
-    cli.py                     <- wires it all together
+    cli.py                     <- wires it all together, plus --test/--dry-run/--config
+  samples/                 <- ready-made alert JSON files for --test
+  run_test_alert.py        <- convenience wrapper for local testing
 ```
 
 Why a package instead of one script: the original single-file script
@@ -194,6 +254,37 @@ sudo tail -f /var/ossec/logs/integrations.log
 ```
 
 Every run is tagged `[custom-socdude]`.
+
+## Known limitations
+
+- **Domain extraction is regex-based and occasionally over-matches.**
+  Anything shaped like `word.word.word` (e.g. an antivirus signature
+  name like `Trojan.GenericKD.malicious`) can be picked up as a
+  candidate domain. This is a deliberate recall-over-precision
+  trade-off: a stricter real-TLD whitelist would also silently drop
+  legitimate but unusual domains (the Juice Shop lab itself uses
+  `juice-sh.op`, not a real TLD). Enrichment providers simply return
+  "not found" for junk entries, so the cost is a slightly noisier IOC
+  table, not a wrong verdict.
+- **Splunk and QRadar are not implemented** - see Roadmap.
+- **Confidence scoring is a heuristic, not a certified risk model.**
+  It's meant to make the AI's risk rating traceable to real signals
+  instead of being an unexplained number, not to replace analyst
+  judgment.
+
+## Roadmap
+
+Done in this iteration:
+- [x] Structured Wazuh field extraction (`data.*`, nested Sysmon fields) fed to the model alongside the raw log
+- [x] Deterministic confidence scoring (LOW/MEDIUM/HIGH/CRITICAL/URGENT)
+- [x] `--test` / `--dry-run` / `--persist-state` local testing workflow
+- [x] Sample alert library (`samples/`)
+
+Still open:
+- [ ] Splunk adapter (`socdude/siem.py::SplunkAdapter`)
+- [ ] QRadar adapter (`socdude/siem.py::QRadarAdapter`)
+- [ ] Optional web dashboard for historical alert review
+- [ ] Slack/Discord/Email notifier alternatives to Telegram
 
 ## Status
 

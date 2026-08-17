@@ -1,0 +1,30 @@
+{
+  "timestamp": "2026-08-17T09:14:22.501+0000",
+  "rule": {
+    "level": 12,
+    "id": "5716",
+    "description": "sshd: Multiple authentication failures followed by a successful login.",
+    "groups": ["authentication_failures", "authentication_success", "syslog", "sshd"],
+    "mitre": {
+      "id": ["T1110", "T1078"],
+      "tactic": ["Credential Access", "Defense Evasion"],
+      "technique": ["Brute Force", "Valid Accounts"]
+    }
+  },
+  "agent": {
+    "id": "003",
+    "name": "prod-bastion-01",
+    "ip": "10.0.2.15"
+  },
+  "manager": { "name": "wazuh-manager" },
+  "id": "1755420862.918273",
+  "decoder": { "name": "sshd" },
+  "data": {
+    "srcip": "185.220.101.5",
+    "srcport": "51423",
+    "dstuser": "admin",
+    "protocol": "ssh"
+  },
+  "location": "/var/log/auth.log",
+  "full_log": "Aug 17 09:14:18 prod-bastion-01 sshd[19233]: Failed password for invalid user admin from 185.220.101.5 port 51420 ssh2\nAug 17 09:14:19 prod-bastion-01 sshd[19234]: Failed password for invalid user admin from 185.220.101.5 port 51421 ssh2\nAug 17 09:14:20 prod-bastion-01 sshd[19235]: Failed password for invalid user admin from 185.220.101.5 port 51422 ssh2\nAug 17 09:14:22 prod-bastion-01 sshd[19236]: Accepted password for admin from 185.220.101.5 port 51423 ssh2"
+}

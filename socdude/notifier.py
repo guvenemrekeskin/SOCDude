@@ -16,9 +16,10 @@ log = logging.getLogger(__name__)
 TELEGRAM_MAX_LEN = 4000  # a safety margin under the real 4096 cap
 
 
-def build_message(alert, ioc_table: str, analysis: str) -> str:
+def build_message(alert, ioc_table: str, analysis: str, confidence: Dict[str, Any]) -> str:
     header = (
-        f"<b>SECURITY ALERT (Level {alert.level})</b>\n\n"
+        f"<b>SECURITY ALERT (Level {alert.level})</b>\n"
+        f"<b>Confidence:</b> {html.escape(confidence['band'])} ({confidence['score']}/100)\n\n"
         f"<b>Agent:</b> {html.escape(str(alert.agent_name))} ({html.escape(str(alert.agent_id))})\n"
         f"<b>Rule:</b> {html.escape(str(alert.description))}\n"
     )

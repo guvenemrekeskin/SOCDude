@@ -23,7 +23,8 @@ class NormalizedAlert:
     """SIEM-agnostic alert shape the rest of the pipeline operates on."""
 
     def __init__(self, level: int, rule_id: str, agent_id: str, agent_name: str,
-                 description: str, full_log: str, raw: Dict[str, Any]):
+                 description: str, full_log: str, raw: Dict[str, Any],
+                 structured_fields: Optional[Dict[str, Any]] = None):
         self.level = level
         self.rule_id = rule_id
         self.agent_id = agent_id
@@ -31,6 +32,57 @@ class NormalizedAlert:
         self.description = description
         self.full_log = full_log
         self.raw = raw
+        # Fields Wazuh already parsed out for us (data.srcip, data.url, ...).
+        # Handed to the LLM as ground truth alongside the raw log, per
+        # provider key, so it isn't solely reliant on re-deriving them
+        # from free text - see _extract_structured_fields() below.
+        self.structured_fields = structured_fields or {}
+
+
+# Common keys Wazuh's decoders populate under alert["data"] across many
+# rulesets (auth logs, web/nginx, firewall, Windows Sysmon, etc). Not
+# exhaustive - anything not listed here still gets picked up by the
+# regex-based IOC extractor against full_log as a fallback.
+_STRUCTURED_FIELD_KEYS = [
+    "srcip", "src_ip", "dstip", "dst_ip", "src_port", "dst_port",
+    "url", "uri", "protocol", "proto", "user", "srcuser", "dstuser",
+    "status", "action", "id", "win.eventdata.image",
+    "win.eventdata.commandLine", "win.eventdata.targetUserName",
+]
+
+
+def _dig(d: Dict[str, Any], dotted_key: str) -> Any:
+    """Look up a possibly dotted key path ('win.eventdata.image') in a
+    nested dict. Returns None if any segment is missing."""
+    cur: Any = d
+    for part in dotted_key.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
+def _extract_structured_fields(alert: Dict[str, Any]) -> Dict[str, Any]:
+    data = alert.get("data", {}) or {}
+    found: Dict[str, Any] = {}
+    for key in _STRUCTURED_FIELD_KEYS:
+        value = _dig(data, key)
+        if value not in (None, ""):
+            found[key] = value
+    return found
+
+
+def render_structured_fields(fields: Dict[str, Any]) -> str:
+    """Render Wazuh's own pre-parsed fields as prompt context. These are
+    handed to the LLM alongside (not instead of) the raw log, so it has
+    a ground-truth source IP/URL/user/etc. rather than having to
+    re-derive everything itself from free text."""
+    if not fields:
+        return "Wazuh did not populate structured data.* fields for this rule; rely on the raw log below."
+    lines = ["Fields Wazuh already parsed out (ground truth - prefer these over re-deriving from the raw log):"]
+    for key, value in fields.items():
+        lines.append(f"  - {key}: {value}")
+    return "\n".join(lines)
 
 
 class SIEMAdapter(ABC):
@@ -77,7 +129,9 @@ class WazuhAdapter(SIEMAdapter):
             log.error("Failed to read expected alert fields: %s", exc)
             return None
 
-        return NormalizedAlert(level, rule_id, agent_id, agent_name, description, full_log, alert)
+        structured_fields = _extract_structured_fields(alert)
+        return NormalizedAlert(level, rule_id, agent_id, agent_name, description,
+                                full_log, alert, structured_fields)
 
 
 class SplunkAdapter(SIEMAdapter):

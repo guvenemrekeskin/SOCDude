@@ -26,8 +26,8 @@ _SHA1 = re.compile(r"\b[a-fA-F0-9]{40}\b")
 _MD5 = re.compile(r"\b[a-fA-F0-9]{32}\b")
 _USER_AGENT = re.compile(r"User-Agent:\s*([^\r\n]+)", re.IGNORECASE)
 _FILE_PATH = re.compile(
-    r"(?:[A-Za-z]:\\(?:[^\\/:*?\"<>|\r\n]+\\)*[^\\/:*?\"<>|\r\n]+"   # Windows path
-    r"|/(?:[^/\0\s]+/)*[^/\0\s]+\.[A-Za-z0-9]{1,6})"                  # Unix-ish, needs an extension
+    r"(?:[A-Za-z]:\\(?:[^\\/:*?\"<>|,\r\n\s]+\\)*[^\\/:*?\"<>|,\r\n\s]+"  # Windows path (stops at whitespace/comma)
+    r"|/(?:[^/\0\s]+/)*[^/\0\s]+\.[A-Za-z][A-Za-z0-9]{0,5}\b)"            # Unix-ish, extension must start with a letter
 )
 
 _MAX_PER_TYPE = 25  # ceiling so one giant log blob can't blow up the table
@@ -83,7 +83,16 @@ def extract_iocs(alert: Dict[str, Any], full_log: str) -> Dict[str, Any]:
     urls = _dedup(_URL.findall(blob))
 
     domain_candidates = _DOMAIN.findall(blob)
-    noisy_tlds = {"exe", "dll", "log", "json", "txt", "conf", "py", "sh", "png", "jpg"}
+    # Common file extensions that match the domain regex's TLD shape
+    # (2-24 alpha chars) but aren't TLDs. Deliberately does NOT include
+    # ambiguous ones like "com"/"info" that are both real TLDs and
+    # occasionally used as extensions - those false positives are a
+    # much smaller cost than dropping real domains.
+    noisy_tlds = {
+        "exe", "dll", "log", "json", "txt", "conf", "py", "sh", "png", "jpg",
+        "dmp", "bin", "dat", "tmp", "cfg", "ini", "bak", "old", "cab", "msi",
+        "sys", "drv", "obj",
+    }
     domains = _dedup([
         d for d in domain_candidates
         if not _IPV4.fullmatch(d)
